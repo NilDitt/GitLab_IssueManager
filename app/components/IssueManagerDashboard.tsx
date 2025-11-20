@@ -37,6 +37,10 @@ const DEFAULT_CREATE: CreateFormState = {
 export function IssueManagerDashboard() {
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   const [createForm, setCreateForm] = useState<CreateFormState>(DEFAULT_CREATE);
+  const [createMode, setCreateMode] = useState<"form" | "json">("form");
+  const [createJson, setCreateJson] = useState<string>(
+    JSON.stringify({ title: "New issue title", description: "Details…", labels: [] }, null, 2)
+  );
   const [projectData, setProjectData] = useState<ProjectIssuesResult | null>(
     null
   );
@@ -44,13 +48,23 @@ export function IssueManagerDashboard() {
   const [isCreating, setIsCreating] = useState(false);
   const [isUpdating, setIsUpdating] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const [filterState, setFilterState] = useState<"all" | "opened" | "closed">(
+    "all"
+  );
+  const [sortBy, setSortBy] = useState<
+    "updated_desc" | "updated_asc" | "created_desc" | "created_asc" | "title_asc"
+  >("updated_desc");
 
   const filteredIssues = useMemo(() => {
     if (!projectData) return [];
-    if (!filter.trim()) return projectData.issues;
     const needle = filter.trim().toLowerCase();
-    return projectData.issues.filter((issue: GitLabIssue) => {
+    const searchFiltered = projectData.issues.filter((issue: GitLabIssue) => {
+      if (filterState !== "all" && issue.state !== filterState) {
+        return false;
+      }
+      if (!needle) return true;
       const haystack = [
         issue.title,
         issue.description ?? "",
@@ -61,7 +75,24 @@ export function IssueManagerDashboard() {
         .toLowerCase();
       return haystack.includes(needle);
     });
-  }, [projectData, filter]);
+    const sorted = [...searchFiltered].sort((a, b) => {
+      const toTime = (value: string) => new Date(value).getTime();
+      switch (sortBy) {
+        case "updated_asc":
+          return toTime(a.updatedAt) - toTime(b.updatedAt);
+        case "created_desc":
+          return toTime(b.createdAt) - toTime(a.createdAt);
+        case "created_asc":
+          return toTime(a.createdAt) - toTime(b.createdAt);
+        case "title_asc":
+          return a.title.localeCompare(b.title);
+        case "updated_desc":
+        default:
+          return toTime(b.updatedAt) - toTime(a.updatedAt);
+      }
+    });
+    return sorted;
+  }, [projectData, filter, filterState, sortBy]);
 
   const summaryCards = useMemo(() => {
     if (!projectData) return [];
@@ -124,7 +155,44 @@ export function IssueManagerDashboard() {
 
   const handleCreateIssue = async (event: FormEvent) => {
     event.preventDefault();
-    if (!createForm.title.trim()) return;
+    setCreateError(null);
+    if (createMode === "form" && !createForm.title.trim()) {
+      setCreateError("Title is required.");
+      return;
+    }
+
+    let payload: { title: string; description?: string; labels?: string[] };
+
+    if (createMode === "json") {
+      try {
+        const parsed = JSON.parse(createJson);
+        if (!parsed?.title || typeof parsed.title !== "string") {
+          throw new Error("JSON must include a string 'title'.");
+        }
+        payload = {
+          title: parsed.title,
+          description:
+            typeof parsed.description === "string"
+              ? parsed.description
+              : undefined,
+          labels: Array.isArray(parsed.labels)
+            ? parsed.labels.filter((label) => typeof label === "string")
+            : undefined,
+        };
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Invalid JSON payload.";
+        setCreateError(message);
+        return;
+      }
+    } else {
+      payload = {
+        title: createForm.title.trim(),
+        description: createForm.description.trim() || undefined,
+        labels: createForm.labels,
+      };
+    }
+
     setIsCreating(true);
     setError(null);
     try {
@@ -133,13 +201,16 @@ export function IssueManagerDashboard() {
         projectPath: form.projectPath.trim(),
         token: form.token.trim(),
         apiUrl: form.apiUrl.trim(),
-        data: {
-          title: createForm.title.trim(),
-          description: createForm.description.trim() || undefined,
-          labels: createForm.labels,
-        },
+        data: payload,
       });
       setCreateForm(DEFAULT_CREATE);
+      setCreateJson(
+        JSON.stringify(
+          { title: "New issue title", description: "Details…", labels: [] },
+          null,
+          2
+        )
+      );
       await handleRefreshIssues();
     } catch (err) {
       const message =
@@ -305,66 +376,102 @@ export function IssueManagerDashboard() {
             <div style={styles.gridTwoCols}>
               <div style={styles.formPanel}>
                 <h3 style={styles.chartTitle}>Create issue</h3>
-                <form style={styles.form} onSubmit={handleCreateIssue}>
-                  <label style={styles.field}>
-                    <span style={styles.label}>Title</span>
-                    <input
-                      style={styles.input}
-                      type="text"
-                      required
-                      value={createForm.title}
-                      onChange={(event) =>
-                        setCreateForm((prev) => ({
-                          ...prev,
-                          title: event.target.value,
-                        }))
-                      }
-                    />
-                  </label>
-                  <label style={styles.field}>
-                    <span style={styles.label}>Description</span>
-                    <textarea
-                      style={{ ...styles.input, minHeight: "120px" }}
-                      value={createForm.description}
-                      onChange={(event) =>
-                        setCreateForm((prev) => ({
-                          ...prev,
-                          description: event.target.value,
-                        }))
-                      }
-                    />
-                  </label>
-                  <LabelSelector
-                    available={projectData.labels}
-                    selected={createForm.labels}
-                    onChange={(labels) =>
-                      setCreateForm((prev) => ({ ...prev, labels }))
-                    }
-                    title="Labels"
-                  />
+                <div style={styles.toggleRow}>
                   <button
-                    type="submit"
-                    style={styles.submit}
-                    disabled={isCreating}
+                    type="button"
+                    style={{
+                      ...styles.toggleButton,
+                      ...(createMode === "form"
+                        ? styles.toggleButtonActive
+                        : styles.toggleButtonInactive),
+                    }}
+                    onClick={() => setCreateMode("form")}
                   >
+                    Form
+                  </button>
+                  <button
+                    type="button"
+                    style={{
+                      ...styles.toggleButton,
+                      ...(createMode === "json"
+                        ? styles.toggleButtonActive
+                        : styles.toggleButtonInactive),
+                    }}
+                    onClick={() => setCreateMode("json")}
+                  >
+                    JSON
+                  </button>
+                </div>
+                <form style={styles.form} onSubmit={handleCreateIssue}>
+                  {createMode === "form" ? (
+                    <>
+                      <label style={styles.field}>
+                        <span style={styles.label}>Title</span>
+                        <input
+                          style={styles.input}
+                          type="text"
+                          required
+                          value={createForm.title}
+                          onChange={(event) =>
+                            setCreateForm((prev) => ({
+                              ...prev,
+                              title: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label style={styles.field}>
+                        <span style={styles.label}>Description</span>
+                        <textarea
+                          style={{ ...styles.input, minHeight: "120px" }}
+                          value={createForm.description}
+                          onChange={(event) =>
+                            setCreateForm((prev) => ({
+                              ...prev,
+                              description: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <LabelSelector
+                        available={projectData.labels}
+                        selected={createForm.labels}
+                        onChange={(labels) =>
+                          setCreateForm((prev) => ({ ...prev, labels }))
+                        }
+                        title="Labels"
+                      />
+                    </>
+                  ) : (
+                    <label style={styles.field}>
+                      <span style={styles.label}>Issue JSON</span>
+                      <textarea
+                        style={{ ...styles.input, minHeight: "220px" }}
+                        value={createJson}
+                        onChange={(event) => setCreateJson(event.target.value)}
+                        required
+                      />
+                      <span style={styles.meta}>
+                        Provide an object like{" "}
+                        <code>
+                          {"{ title, description?, labels?: string[] }"}
+                        </code>
+                        .
+                      </span>
+                    </label>
+                  )}
+                  {createError ? (
+                    <p style={styles.error}>{createError}</p>
+                  ) : null}
+                  <button type="submit" style={styles.submit} disabled={isCreating}>
                     {isCreating ? "Creating…" : "Create issue"}
                   </button>
                 </form>
               </div>
               <div style={styles.formPanel}>
-                <h3 style={styles.chartTitle}>Filter issues</h3>
-                <input
-                  style={styles.input}
-                  type="search"
-                  placeholder="Search by title, state, label, description…"
-                  value={filter}
-                  onChange={(event) => setFilter(event.target.value)}
-                />
-                <small style={styles.meta}>
-                  Showing {filteredIssues.length} of {projectData.issues.length}.
-                </small>
+                <h3 style={styles.chartTitle}>Raw JSON</h3>
                 <details style={styles.detailsBox}>
-                  <summary style={styles.summaryToggle}>Raw JSON</summary>
+                  <summary style={styles.summaryToggle}>View payload</summary>
                   <pre style={styles.jsonPreview}>
 {JSON.stringify(projectData.issues, null, 2)}
                   </pre>
@@ -373,7 +480,59 @@ export function IssueManagerDashboard() {
             </div>
 
             <div style={styles.issueTable}>
-              <h3 style={styles.tableTitle}>Issues</h3>
+              <div style={styles.tableToolbar}>
+                <h3 style={styles.tableTitle}>Issues</h3>
+                <div style={styles.toolbarRow}>
+                  <input
+                    style={{ ...styles.input, maxWidth: "320px" }}
+                    type="search"
+                    placeholder="Search title, state, label, description…"
+                    value={filter}
+                    onChange={(event) => setFilter(event.target.value)}
+                  />
+                  <label style={styles.filterField}>
+                    <span style={styles.label}>State</span>
+                    <select
+                      style={styles.select}
+                      value={filterState}
+                      onChange={(event) =>
+                        setFilterState(event.target.value as "all" | "opened" | "closed")
+                      }
+                    >
+                      <option value="all">All</option>
+                      <option value="opened">Opened</option>
+                      <option value="closed">Closed</option>
+                    </select>
+                  </label>
+                  <label style={styles.filterField}>
+                    <span style={styles.label}>Sort</span>
+                    <select
+                      style={styles.select}
+                      value={sortBy}
+                      onChange={(event) =>
+                        setSortBy(
+                          event.target
+                            .value as
+                            | "updated_desc"
+                            | "updated_asc"
+                            | "created_desc"
+                            | "created_asc"
+                            | "title_asc"
+                        )
+                      }
+                    >
+                      <option value="updated_desc">Updated ↓</option>
+                      <option value="updated_asc">Updated ↑</option>
+                      <option value="created_desc">Created ↓</option>
+                      <option value="created_asc">Created ↑</option>
+                      <option value="title_asc">Title A→Z</option>
+                    </select>
+                  </label>
+                  <span style={styles.meta}>
+                    Showing {filteredIssues.length} of {projectData.issues.length}
+                  </span>
+                </div>
+              </div>
               <div style={styles.tableHead}>
                 <span style={{ flex: 2 }}>Title</span>
                 <span style={{ flex: 1 }}>State</span>
@@ -871,5 +1030,62 @@ const styles: Record<string, CSSProperties> = {
     gap: "0.5rem",
     alignItems: "center",
     flexWrap: "wrap",
+  },
+  toggleRow: {
+    display: "inline-flex",
+    gap: "0.5rem",
+    background: "rgba(15, 23, 42, 0.6)",
+    borderRadius: "0.65rem",
+    padding: "0.3rem",
+    border: "1px solid rgba(148, 163, 184, 0.2)",
+    width: "fit-content",
+  },
+  toggleButton: {
+    padding: "0.45rem 0.9rem",
+    borderRadius: "0.55rem",
+    border: "1px solid transparent",
+    cursor: "pointer",
+    background: "transparent",
+    color: "#e2e8f0",
+    fontWeight: 600,
+  },
+  toggleButtonActive: {
+    background: "rgba(56, 189, 248, 0.18)",
+    borderColor: "rgba(56, 189, 248, 0.5)",
+    color: "#38bdf8",
+  },
+  toggleButtonInactive: {
+    borderColor: "rgba(148, 163, 184, 0.2)",
+    color: "rgba(226, 232, 240, 0.85)",
+  },
+  select: {
+    ...({
+      padding: "0.65rem 0.8rem",
+      borderRadius: "0.65rem",
+      border: "1px solid rgba(148, 163, 184, 0.3)",
+      background: "rgba(15, 23, 42, 0.6)",
+      color: "#f8fafc",
+      fontSize: "0.95rem",
+    } as CSSProperties),
+  },
+  filterRow: {
+    display: "flex",
+    gap: "0.75rem",
+    flexWrap: "wrap",
+  },
+  filterField: {
+    display: "grid",
+    gap: "0.25rem",
+    minWidth: "160px",
+  },
+  tableToolbar: {
+    display: "grid",
+    gap: "0.5rem",
+  },
+  toolbarRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "0.75rem",
+    alignItems: "flex-end",
   },
 };
