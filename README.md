@@ -20,7 +20,12 @@ npm install
 npm run dev
 # open http://localhost:3000
 ```
-Set defaults in `app/config/issue-config.ts` (API URL, project path, token) or paste your token into the form at runtime.
+Set defaults in `app/config/issue-config.ts` (API URL, project path). To prefill the form, add entries to `.env` (see `.env.example`):
+```
+NEXT_PUBLIC_GITLAB_PROJECT_PATH=group/subgroup/project
+NEXT_PUBLIC_GITLAB_TOKEN=your-pat-with-api-scope
+```
+Values are only read on the client for convenience; do not commit real tokens.
 
 ## Production build
 ```bash

@@ -3,9 +3,11 @@ import {
   createIssue,
   fetchProjectIssues,
   fetchProjectLabels,
+  updateIssue,
   updateIssueLabels,
   type CreateIssueInput,
   type GitLabCredentials,
+  type UpdateIssueInput,
   type UpdateIssueLabelsInput,
 } from "../../lib/gitlab";
 
@@ -15,7 +17,8 @@ type IssueAction =
   | "listIssues"
   | "createIssue"
   | "updateLabels"
-  | "fetchLabels";
+  | "fetchLabels"
+  | "updateIssue";
 
 interface IssueRequestPayload extends GitLabCredentials {
   action: IssueAction;
@@ -99,6 +102,21 @@ export async function POST(request: Request) {
           data
         );
         return NextResponse.json({ labels });
+      }
+      case "updateIssue": {
+        const data = payload.data as UpdateIssueInput | undefined;
+        if (!data?.issueIid) {
+          return NextResponse.json(
+            { error: "Field 'data.issueIid' is required for updateIssue." },
+            { status: 400 }
+          );
+        }
+        const issue = await updateIssue(
+          payload.projectPath,
+          credentials,
+          data
+        );
+        return NextResponse.json(issue);
       }
       default:
         return NextResponse.json(

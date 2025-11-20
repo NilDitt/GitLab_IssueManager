@@ -1,7 +1,9 @@
 export const GITLAB_CONFIG = {
   API_URL: "https://gitlab.com/api/graphql",
-  PROJECT_PATH: "dhbw-se/se-tinf24b2/gruppe-4/dhubbw",
-  TOKEN: "glpat-c6-ceWrK2uL60VLKxyE-CW86MQp1OmlsMGltCw.01.120sej9l3",
+  PROJECT_PATH:
+    process.env.NEXT_PUBLIC_GITLAB_PROJECT_PATH ?? "your-group/your-project",
+  // Use NEXT_PUBLIC_GITLAB_TOKEN to prefill the client form (dev only).
+  TOKEN: process.env.NEXT_PUBLIC_GITLAB_TOKEN ?? "",
 } as const;
 
 export const COLORS = {

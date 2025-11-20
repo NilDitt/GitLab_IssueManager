@@ -163,8 +163,8 @@ export async function fetchProjectIssues(
   };
 
   const issues: GitLabIssue[] = [];
-  let pageInfo: IssuePageResponse["project"]["issues"]["pageInfo"] | null =
-    null;
+  type ProjectNode = NonNullable<IssuePageResponse["project"]>;
+  let pageInfo: ProjectNode["issues"]["pageInfo"] | null = null;
   let projectMeta: ProjectRef | null = null;
   let labels: IssueLabel[] = [];
 
@@ -196,7 +196,7 @@ export async function fetchProjectIssues(
       throw new Error("Project not found or access denied.");
     }
 
-    const { project } = payload.data;
+    const project = payload.data.project!;
     projectMeta = {
       id: project.id,
       name: project.name,
@@ -347,6 +347,14 @@ export interface UpdateIssueLabelsInput {
   labels: string[];
 }
 
+export interface UpdateIssueInput {
+  issueIid: string;
+  title?: string;
+  description?: string;
+  labels?: string[];
+  stateEvent?: "close" | "reopen";
+}
+
 export async function updateIssueLabels(
   projectFullPath: string,
   credentials: GitLabCredentials,
@@ -381,4 +389,87 @@ export async function updateIssueLabels(
       title,
     })) ?? []
   );
+}
+
+export async function updateIssue(
+  projectFullPath: string,
+  credentials: GitLabCredentials,
+  input: UpdateIssueInput
+): Promise<GitLabIssue> {
+  if (!input.issueIid) {
+    throw new Error("Missing issueIid.");
+  }
+
+  const restBase = resolveRestEndpoint(credentials.apiUrl);
+  const encodedProject = encodeURIComponent(projectFullPath);
+  const url = `${restBase}/projects/${encodedProject}/issues/${encodeURIComponent(
+    input.issueIid
+  )}`;
+
+  const body: Record<string, unknown> = {};
+  if (input.title) body.title = input.title;
+  if (input.description !== undefined) body.description = input.description;
+  if (input.labels) body.labels = input.labels.join(",");
+  if (input.stateEvent) body.state_event = input.stateEvent;
+
+  if (Object.keys(body).length === 0) {
+    throw new Error("No fields provided to update.");
+  }
+
+  const response = await fetch(url, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${credentials.token}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to update issue (${response.status} ${response.statusText}).`
+    );
+  }
+
+  const payload = (await response.json()) as {
+    id: number | string;
+    iid: number | string;
+    title: string;
+    description?: string | null;
+    state: string;
+    web_url: string;
+    created_at: string;
+    updated_at: string;
+    author?: { id: number; name: string; username: string };
+    assignees?: Array<{ id: number; name: string; username: string }>;
+    labels?: string[];
+  };
+
+  return {
+    id: String(payload.id),
+    iid: String(payload.iid),
+    title: payload.title,
+    description: payload.description,
+    state: payload.state,
+    webUrl: payload.web_url,
+    createdAt: payload.created_at,
+    updatedAt: payload.updated_at,
+    author: payload.author
+      ? {
+          id: String(payload.author.id),
+          name: payload.author.name,
+          username: payload.author.username,
+        }
+      : undefined,
+    assignees:
+      payload.assignees?.map((assignee) => ({
+        id: String(assignee.id),
+        name: assignee.name,
+        username: assignee.username,
+      })) ?? [],
+    labels:
+      payload.labels?.map((name) => ({
+        title: name,
+      })) ?? [],
+  };
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { COLORS, GITLAB_CONFIG } from "../config/issue-config";
 import type {
@@ -41,14 +41,20 @@ export function IssueManagerDashboard() {
   const [createJson, setCreateJson] = useState<string>(
     JSON.stringify({ title: "New issue title", description: "Details…", labels: [] }, null, 2)
   );
+  const [editingIssue, setEditingIssue] = useState<GitLabIssue | null>(null);
+  const [editMode, setEditMode] = useState<"form" | "json">("form");
+  const [editForm, setEditForm] = useState<CreateFormState>(DEFAULT_CREATE);
+  const [editJson, setEditJson] = useState<string>("");
   const [projectData, setProjectData] = useState<ProjectIssuesResult | null>(
     null
   );
   const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  const [isUpdating, setIsUpdating] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editNotice, setEditNotice] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [filterState, setFilterState] = useState<"all" | "opened" | "closed">(
     "all"
@@ -132,6 +138,36 @@ export function IssueManagerDashboard() {
     return (await response.json()) as unknown;
   };
 
+  const openEditIssue = (issue: GitLabIssue) => {
+    setEditingIssue(issue);
+    setEditMode("form");
+    setEditForm({
+      title: issue.title,
+      description: issue.description ?? "",
+      labels: issue.labels.map((label) => label.title),
+    });
+    setEditJson(
+      JSON.stringify(
+        {
+          title: issue.title,
+          description: issue.description ?? "",
+          labels: issue.labels.map((label) => label.title),
+        },
+        null,
+        2
+      )
+    );
+    setEditError(null);
+  };
+
+  const closeEditIssue = () => {
+    setEditingIssue(null);
+    setEditError(null);
+    setEditJson("");
+    setEditForm(DEFAULT_CREATE);
+    setIsEditing(false);
+  };
+
   const handleLoadIssues = async (event: FormEvent) => {
     event.preventDefault();
     setError(null);
@@ -176,7 +212,7 @@ export function IssueManagerDashboard() {
               ? parsed.description
               : undefined,
           labels: Array.isArray(parsed.labels)
-            ? parsed.labels.filter((label) => typeof label === "string")
+            ? parsed.labels.filter((label: unknown) => typeof label === "string")
             : undefined,
         };
       } catch (err) {
@@ -221,6 +257,80 @@ export function IssueManagerDashboard() {
     }
   };
 
+  const handleSubmitEdit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!editingIssue) return;
+    setEditError(null);
+
+    let payload: { title?: string; description?: string; labels?: string[] };
+
+    if (editMode === "json") {
+      try {
+        const parsed = JSON.parse(editJson);
+        if (!parsed?.title || typeof parsed.title !== "string") {
+          throw new Error("JSON must include a string 'title'.");
+        }
+        payload = {
+          title: parsed.title,
+          description:
+            typeof parsed.description === "string"
+              ? parsed.description
+              : undefined,
+          labels: Array.isArray(parsed.labels)
+            ? parsed.labels.filter((label: unknown) => typeof label === "string")
+            : undefined,
+        };
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Invalid JSON payload.";
+        setEditError(message);
+        return;
+      }
+    } else {
+      if (!editForm.title.trim()) {
+        setEditError("Title is required.");
+        return;
+      }
+      payload = {
+        title: editForm.title.trim(),
+        description: editForm.description.trim(),
+        labels: editForm.labels,
+      };
+    }
+
+    setIsEditing(true);
+    try {
+      const updated = (await callApi({
+        action: "updateIssue",
+        projectPath: form.projectPath.trim(),
+        token: form.token.trim(),
+        apiUrl: form.apiUrl.trim(),
+        data: {
+          issueIid: editingIssue.iid,
+          ...payload,
+        },
+      })) as GitLabIssue;
+
+      setProjectData((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          issues: prev.issues.map((issue) =>
+            issue.id === updated.id ? updated : issue
+          ),
+        };
+      });
+      setEditNotice(`Issue #${updated.iid} updated successfully.`);
+      closeEditIssue();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Unable to update issue.";
+      setEditError(message);
+    } finally {
+      setIsEditing(false);
+    }
+  };
+
   const handleRefreshIssues = async () => {
     if (!projectData) return;
     try {
@@ -235,38 +345,6 @@ export function IssueManagerDashboard() {
       const message =
         err instanceof Error ? err.message : "Unable to refresh issues.";
       setError(message);
-    }
-  };
-
-  const handleUpdateLabels = async (issue: GitLabIssue, labels: string[]) => {
-    setIsUpdating(issue.id);
-    setError(null);
-    try {
-      const result = (await callApi({
-        action: "updateLabels",
-        projectPath: form.projectPath.trim(),
-        token: form.token.trim(),
-        apiUrl: form.apiUrl.trim(),
-        data: { issueIid: issue.iid, labels },
-      })) as { labels: IssueLabel[] };
-      setProjectData((prev) => {
-        if (!prev) return prev;
-        const nextIssues = prev.issues.map((candidate: GitLabIssue) =>
-          candidate.id === issue.id
-            ? {
-                ...candidate,
-                labels: result.labels,
-              }
-            : candidate
-        );
-        return { ...prev, issues: nextIssues };
-      });
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Unable to update labels.";
-      setError(message);
-    } finally {
-      setIsUpdating(null);
     }
   };
 
@@ -479,9 +557,10 @@ export function IssueManagerDashboard() {
               </div>
             </div>
 
-            <div style={styles.issueTable}>
+              <div style={styles.issueTable}>
               <div style={styles.tableToolbar}>
                 <h3 style={styles.tableTitle}>Issues</h3>
+                {editNotice ? <div style={styles.successBox}>{editNotice}</div> : null}
                 <div style={styles.toolbarRow}>
                   <input
                     style={{ ...styles.input, maxWidth: "320px" }}
@@ -539,6 +618,7 @@ export function IssueManagerDashboard() {
                 <span style={{ flex: 2 }}>Labels</span>
                 <span style={{ flex: 1 }}>Assignees</span>
                 <span style={{ flex: 1 }}>Updated</span>
+                <span style={{ flex: 1 }}>Actions</span>
               </div>
               {filteredIssues.map((issue: GitLabIssue) => {
                 return (
@@ -563,12 +643,15 @@ export function IssueManagerDashboard() {
                       <Badge label={issue.state} />
                     </span>
                     <span style={{ flex: 2 }}>
-                      <LabelPicker
-                        issue={issue}
-                        available={projectData.labels}
-                        onChange={handleUpdateLabels}
-                        isUpdating={isUpdating === issue.id}
-                      />
+                      <div style={styles.labelStack}>
+                        {issue.labels.length ? (
+                          issue.labels.map((label) => (
+                            <LabelChip key={label.title} label={label.title} />
+                          ))
+                        ) : (
+                          <span style={styles.meta}>No labels</span>
+                        )}
+                      </div>
                     </span>
                     <span style={{ flex: 1 }}>
                       {issue.assignees.length
@@ -580,12 +663,145 @@ export function IssueManagerDashboard() {
                     <span style={{ flex: 1 }}>
                       {new Date(issue.updatedAt).toLocaleDateString()}
                     </span>
+                    <span style={{ flex: 1 }}>
+                      <button
+                        type="button"
+                        style={styles.secondaryButton}
+                        onClick={() => openEditIssue(issue)}
+                      >
+                        Edit issue
+                      </button>
+                    </span>
                   </div>
                 );
               })}
             </div>
           </section>
         </>
+      ) : null}
+
+      {editingIssue ? (
+        <div style={styles.modalBackdrop}>
+          <div style={styles.modal}>
+            <div style={styles.modalHeader}>
+              <h3 style={styles.modalTitle}>
+                Edit issue #{editingIssue.iid}
+              </h3>
+              <button
+                type="button"
+                style={styles.closeButton}
+                onClick={closeEditIssue}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            <div style={styles.toggleRow}>
+              <button
+                type="button"
+                style={{
+                  ...styles.toggleButton,
+                  ...(editMode === "form"
+                    ? styles.toggleButtonActive
+                    : styles.toggleButtonInactive),
+                }}
+                onClick={() => setEditMode("form")}
+              >
+                Form
+              </button>
+              <button
+                type="button"
+                style={{
+                  ...styles.toggleButton,
+                  ...(editMode === "json"
+                    ? styles.toggleButtonActive
+                    : styles.toggleButtonInactive),
+                }}
+                onClick={() => setEditMode("json")}
+              >
+                JSON
+              </button>
+            </div>
+
+            <form style={styles.form} onSubmit={handleSubmitEdit}>
+              {editMode === "form" ? (
+                <>
+                  <label style={styles.field}>
+                    <span style={styles.label}>Title</span>
+                    <input
+                      style={styles.input}
+                      type="text"
+                      required
+                      value={editForm.title}
+                      onChange={(event) =>
+                        setEditForm((prev) => ({
+                          ...prev,
+                          title: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label style={styles.field}>
+                    <span style={styles.label}>Description</span>
+                    <textarea
+                      style={{ ...styles.input, minHeight: "140px" }}
+                      value={editForm.description}
+                      onChange={(event) =>
+                        setEditForm((prev) => ({
+                          ...prev,
+                          description: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <LabelSelector
+                    available={projectData?.labels ?? []}
+                    selected={editForm.labels}
+                    onChange={(labels) =>
+                      setEditForm((prev) => ({ ...prev, labels }))
+                    }
+                    title="Labels"
+                  />
+                </>
+              ) : (
+                <label style={styles.field}>
+                  <span style={styles.label}>Issue JSON</span>
+                  <textarea
+                    style={{ ...styles.input, minHeight: "220px" }}
+                    value={editJson}
+                    onChange={(event) => setEditJson(event.target.value)}
+                    required
+                  />
+                  <span style={styles.meta}>
+                    Include keys like{" "}
+                    <code>{"{ title, description?, labels?: string[] }"}</code>.
+                  </span>
+                </label>
+              )}
+
+              {editError ? <p style={styles.error}>{editError}</p> : null}
+
+              <div style={styles.modalActions}>
+                <button
+                  type="submit"
+                  style={styles.submit}
+                  disabled={isEditing}
+                >
+                  {isEditing ? "Saving…" : "Save changes"}
+                </button>
+                <button
+                  type="button"
+                  style={styles.secondaryButton}
+                  onClick={closeEditIssue}
+                  disabled={isEditing}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       ) : null}
     </div>
   );
@@ -686,90 +902,6 @@ function LabelSelector({
           <span style={styles.meta}>No labels in project yet.</span>
         )}
       </div>
-    </div>
-  );
-}
-
-function LabelPicker({
-  issue,
-  available,
-  onChange,
-  isUpdating,
-}: {
-  issue: GitLabIssue;
-  available: IssueLabel[];
-  onChange: (issue: GitLabIssue, labels: string[]) => void;
-  isUpdating: boolean;
-}) {
-  const [draft, setDraft] = useState<string[]>(
-    issue.labels.map((label: IssueLabel) => label.title)
-  );
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    setDraft(issue.labels.map((label: IssueLabel) => label.title));
-  }, [issue.labels]);
-
-  const toggle = (label: string) => {
-    setDraft((prev) =>
-      prev.includes(label) ? prev.filter((item) => item !== label) : [...prev, label]
-    );
-  };
-
-  const handleSave = () => {
-    onChange(issue, draft);
-    setOpen(false);
-  };
-
-  return (
-    <div style={{ display: "grid", gap: "0.35rem" }}>
-      <div style={styles.labelStack}>
-        {draft.length ? (
-          draft.map((label) => <LabelChip key={label} label={label} />)
-        ) : (
-          <span style={styles.meta}>No labels</span>
-        )}
-      </div>
-      <div style={styles.labelEditorRow}>
-        <button
-          type="button"
-          style={styles.secondaryButton}
-          onClick={() => setOpen((prev) => !prev)}
-        >
-          {open ? "Hide labels" : "Edit labels"}
-        </button>
-        <button
-          type="button"
-          style={styles.submit}
-          onClick={handleSave}
-          disabled={isUpdating}
-        >
-          {isUpdating ? "Saving…" : "Save"}
-        </button>
-      </div>
-      {open ? (
-        <div style={styles.labelSelector}>
-          {available.map((label: IssueLabel) => {
-            const active = draft.includes(label.title);
-            return (
-              <button
-                key={label.title}
-                type="button"
-                onClick={() => toggle(label.title)}
-                style={{
-                  ...styles.labelChip,
-                  ...(active
-                    ? styles.labelChipActive
-                    : styles.labelChipInactive),
-                }}
-                title={label.description ?? label.title}
-              >
-                {label.title}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -1025,12 +1157,6 @@ const styles: Record<string, CSSProperties> = {
     flexWrap: "wrap",
     gap: "0.35rem",
   },
-  labelEditorRow: {
-    display: "flex",
-    gap: "0.5rem",
-    alignItems: "center",
-    flexWrap: "wrap",
-  },
   toggleRow: {
     display: "inline-flex",
     gap: "0.5rem",
@@ -1087,5 +1213,62 @@ const styles: Record<string, CSSProperties> = {
     flexWrap: "wrap",
     gap: "0.75rem",
     alignItems: "flex-end",
+  },
+  modalBackdrop: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15, 23, 42, 0.65)",
+    backdropFilter: "blur(6px)",
+    display: "grid",
+    placeItems: "center",
+    padding: "1rem",
+    zIndex: 1000,
+  },
+  modal: {
+    width: "min(720px, 100%)",
+    background: "rgba(15, 23, 42, 0.95)",
+    borderRadius: "0.9rem",
+    border: "1px solid rgba(148, 163, 184, 0.25)",
+    padding: "1rem",
+    boxShadow: "0 20px 50px rgba(0,0,0,0.4)",
+    display: "grid",
+    gap: "0.6rem",
+  },
+  modalHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "0.5rem",
+  },
+  modalTitle: {
+    margin: 0,
+    fontSize: "1.1rem",
+  },
+  closeButton: {
+    background: "transparent",
+    border: "1px solid rgba(148, 163, 184, 0.25)",
+    color: "#e2e8f0",
+    borderRadius: "0.5rem",
+    padding: "0.25rem 0.65rem",
+    cursor: "pointer",
+    fontSize: "1.1rem",
+    lineHeight: 1,
+  },
+  modalActions: {
+    display: "flex",
+    gap: "0.75rem",
+    justifyContent: "flex-end",
+    flexWrap: "wrap",
+  },
+  successBox: {
+    padding: "0.4rem 0.75rem",
+    borderRadius: "0.6rem",
+    background: "rgba(74, 222, 128, 0.15)",
+    border: "1px solid rgba(74, 222, 128, 0.35)",
+    color: "#4ade80",
+    fontSize: "0.95rem",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "0.4rem",
   },
 };
