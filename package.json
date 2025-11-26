@@ -8,9 +8,11 @@
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
-    "create-issue": "node scripts/create-issue.js"
+    "create-issue": "node scripts/create-issue.js",
+    "issue-cli": "node scripts/issues-cli.js"
   },
   "dependencies": {
+    "dotenv": "^17.2.3",
     "next": "14.2.3",
     "react": "18.3.1",
     "react-dom": "18.3.1"

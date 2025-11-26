@@ -1,5 +1,8 @@
 "use strict";
 
+const { loadEnv } = require("./utils/load-env");
+loadEnv();
+
 /**
  * Lightweight CLI to create a GitLab issue without running the Next.js app.
  *
@@ -21,7 +24,10 @@ function parseArgs() {
     const arg = args[i];
     if (!arg.startsWith("--")) continue;
     const key = arg.slice(2);
-    const value = args[i + 1]?.startsWith("--") || args[i + 1] === undefined ? true : args[i + 1];
+    const value =
+      args[i + 1]?.startsWith("--") || args[i + 1] === undefined
+        ? true
+        : args[i + 1];
     parsed[key] = value;
     if (value !== true) i += 1;
   }
@@ -30,18 +36,27 @@ function parseArgs() {
 
 async function main() {
   const args = parseArgs();
-  const token = args.token || process.env.GITLAB_TOKEN || process.env.NEXT_PUBLIC_GITLAB_TOKEN;
+  const token =
+    args.token ||
+    process.env.GITLAB_TOKEN ||
+    process.env.NEXT_PUBLIC_GITLAB_TOKEN;
   const projectPath =
     args.project ||
     process.env.GITLAB_PROJECT_PATH ||
     process.env.NEXT_PUBLIC_GITLAB_PROJECT_PATH;
-  const apiBase = (args["api-url"] || process.env.GITLAB_API_URL || DEFAULT_API).replace(/\/$/, "");
+  const apiBase = (
+    args["api-url"] ||
+    process.env.GITLAB_API_URL ||
+    DEFAULT_API
+  ).replace(/\/$/, "");
 
   if (!token) {
     throw new Error("Missing token. Set GITLAB_TOKEN or pass --token.");
   }
   if (!projectPath) {
-    throw new Error("Missing project path. Set GITLAB_PROJECT_PATH or pass --project.");
+    throw new Error(
+      "Missing project path. Set GITLAB_PROJECT_PATH or pass --project."
+    );
   }
 
   const title = args.title;
@@ -59,7 +74,11 @@ async function main() {
     description,
     labels,
   };
-  if (health === "on_track" || health === "needs_attention" || health === "at_risk") {
+  if (
+    health === "on_track" ||
+    health === "needs_attention" ||
+    health === "at_risk"
+  ) {
     payload.health_status = health;
   }
   if (Number.isFinite(estimateHours) && estimateHours > 0) {
@@ -80,7 +99,9 @@ async function main() {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`GitLab responded ${res.status} ${res.statusText}: ${text}`);
+    throw new Error(
+      `GitLab responded ${res.status} ${res.statusText}: ${text}`
+    );
   }
 
   const json = await res.json();
