@@ -8,6 +8,8 @@ import type {
   IssueLabel,
   ProjectIssuesResult,
   IssueAssignee,
+  CreateIssueInput,
+  UpdateIssueInput,
 } from "../lib/gitlab";
 
 interface FormState {
@@ -20,6 +22,8 @@ interface CreateFormState {
   title: string;
   description: string;
   labels: string[];
+  healthStatus: "" | "on_track" | "needs_attention" | "at_risk";
+  estimateHours: string;
 }
 
 const DEFAULT_FORM: FormState = {
@@ -32,6 +36,8 @@ const DEFAULT_CREATE: CreateFormState = {
   title: "",
   description: "",
   labels: [],
+  healthStatus: "",
+  estimateHours: "",
 };
 
 export function IssueManagerDashboard() {
@@ -59,6 +65,7 @@ export function IssueManagerDashboard() {
   const [filterState, setFilterState] = useState<"all" | "opened" | "closed">(
     "all"
   );
+  const [jsonView, setJsonView] = useState<"all" | "filtered">("all");
   const [sortBy, setSortBy] = useState<
     "updated_desc" | "updated_asc" | "created_desc" | "created_asc" | "title_asc"
   >("updated_desc");
@@ -145,6 +152,15 @@ export function IssueManagerDashboard() {
       title: issue.title,
       description: issue.description ?? "",
       labels: issue.labels.map((label) => label.title),
+      healthStatus: (issue.healthStatus ?? "") as
+        | ""
+        | "on_track"
+        | "needs_attention"
+        | "at_risk",
+      estimateHours:
+        issue.timeEstimate && issue.timeEstimate > 0
+          ? String(Math.round((issue.timeEstimate / 3600) * 100) / 100)
+          : "",
     });
     setEditJson(
       JSON.stringify(
@@ -152,6 +168,8 @@ export function IssueManagerDashboard() {
           title: issue.title,
           description: issue.description ?? "",
           labels: issue.labels.map((label) => label.title),
+          healthStatus: issue.healthStatus,
+          timeEstimateSeconds: issue.timeEstimate,
         },
         null,
         2
@@ -197,7 +215,7 @@ export function IssueManagerDashboard() {
       return;
     }
 
-    let payload: { title: string; description?: string; labels?: string[] };
+    let payload: CreateIssueInput;
 
     if (createMode === "json") {
       try {
@@ -214,6 +232,16 @@ export function IssueManagerDashboard() {
           labels: Array.isArray(parsed.labels)
             ? parsed.labels.filter((label: unknown) => typeof label === "string")
             : undefined,
+          healthStatus:
+            parsed.healthStatus === "on_track" ||
+            parsed.healthStatus === "needs_attention" ||
+            parsed.healthStatus === "at_risk"
+              ? parsed.healthStatus
+              : undefined,
+          timeEstimateSeconds:
+            typeof parsed.timeEstimateSeconds === "number"
+              ? parsed.timeEstimateSeconds
+              : undefined,
         };
       } catch (err) {
         const message =
@@ -226,6 +254,11 @@ export function IssueManagerDashboard() {
         title: createForm.title.trim(),
         description: createForm.description.trim() || undefined,
         labels: createForm.labels,
+        healthStatus: createForm.healthStatus || undefined,
+        timeEstimateSeconds:
+          createForm.estimateHours.trim() !== ""
+            ? Math.max(0, Math.round(Number(createForm.estimateHours) * 3600))
+            : undefined,
       };
     }
 
@@ -262,7 +295,7 @@ export function IssueManagerDashboard() {
     if (!editingIssue) return;
     setEditError(null);
 
-    let payload: { title?: string; description?: string; labels?: string[] };
+    let payload: UpdateIssueInput = { issueIid: editingIssue.iid };
 
     if (editMode === "json") {
       try {
@@ -271,6 +304,7 @@ export function IssueManagerDashboard() {
           throw new Error("JSON must include a string 'title'.");
         }
         payload = {
+          issueIid: editingIssue.iid,
           title: parsed.title,
           description:
             typeof parsed.description === "string"
@@ -279,6 +313,16 @@ export function IssueManagerDashboard() {
           labels: Array.isArray(parsed.labels)
             ? parsed.labels.filter((label: unknown) => typeof label === "string")
             : undefined,
+          healthStatus:
+            parsed.healthStatus === "on_track" ||
+            parsed.healthStatus === "needs_attention" ||
+            parsed.healthStatus === "at_risk"
+              ? parsed.healthStatus
+              : undefined,
+          timeEstimateSeconds:
+            typeof parsed.timeEstimateSeconds === "number"
+              ? parsed.timeEstimateSeconds
+              : undefined,
         };
       } catch (err) {
         const message =
@@ -292,9 +336,15 @@ export function IssueManagerDashboard() {
         return;
       }
       payload = {
+        issueIid: editingIssue.iid,
         title: editForm.title.trim(),
         description: editForm.description.trim(),
         labels: editForm.labels,
+        healthStatus: editForm.healthStatus || undefined,
+        timeEstimateSeconds:
+          editForm.estimateHours.trim() !== ""
+            ? Math.max(0, Math.round(Number(editForm.estimateHours) * 3600))
+            : undefined,
       };
     }
 
@@ -305,10 +355,7 @@ export function IssueManagerDashboard() {
         projectPath: form.projectPath.trim(),
         token: form.token.trim(),
         apiUrl: form.apiUrl.trim(),
-        data: {
-          issueIid: editingIssue.iid,
-          ...payload,
-        },
+        data: payload,
       })) as GitLabIssue;
 
       setProjectData((prev) => {
@@ -519,6 +566,45 @@ export function IssueManagerDashboard() {
                         }
                         title="Labels"
                       />
+                      <div style={styles.filterRow}>
+                        <label style={styles.filterField}>
+                          <span style={styles.label}>Health status</span>
+                          <select
+                            style={styles.select}
+                            value={createForm.healthStatus}
+                            onChange={(event) =>
+                              setCreateForm((prev) => ({
+                                ...prev,
+                                healthStatus: event.target
+                                  .value as CreateFormState["healthStatus"],
+                              }))
+                            }
+                          >
+                            <option value="">Not set</option>
+                            <option value="on_track">On track</option>
+                            <option value="needs_attention">
+                              Needs attention
+                            </option>
+                            <option value="at_risk">At risk</option>
+                          </select>
+                        </label>
+                        <label style={styles.filterField}>
+                          <span style={styles.label}>Estimate (hours)</span>
+                          <input
+                            style={styles.input}
+                            type="number"
+                            min="0"
+                            step="0.25"
+                            value={createForm.estimateHours}
+                            onChange={(event) =>
+                              setCreateForm((prev) => ({
+                                ...prev,
+                                estimateHours: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                      </div>
                     </>
                   ) : (
                     <label style={styles.field}>
@@ -532,7 +618,9 @@ export function IssueManagerDashboard() {
                       <span style={styles.meta}>
                         Provide an object like{" "}
                         <code>
-                          {"{ title, description?, labels?: string[] }"}
+                          {
+                            "{ title, description?, labels?: string[], healthStatus?, timeEstimateSeconds? }"
+                          }
                         </code>
                         .
                       </span>
@@ -548,12 +636,64 @@ export function IssueManagerDashboard() {
               </div>
               <div style={styles.formPanel}>
                 <h3 style={styles.chartTitle}>Raw JSON</h3>
+                <div style={styles.toggleRow}>
+                  <button
+                    type="button"
+                    style={{
+                      ...styles.toggleButton,
+                      ...(jsonView === "all"
+                        ? styles.toggleButtonActive
+                        : styles.toggleButtonInactive),
+                    }}
+                    onClick={() => setJsonView("all")}
+                  >
+                    All issues
+                  </button>
+                  <button
+                    type="button"
+                    style={{
+                      ...styles.toggleButton,
+                      ...(jsonView === "filtered"
+                        ? styles.toggleButtonActive
+                        : styles.toggleButtonInactive),
+                    }}
+                    onClick={() => setJsonView("filtered")}
+                  >
+                    Filtered only
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.secondaryButton}
+                    onClick={() => {
+                      const payload =
+                        jsonView === "filtered"
+                          ? filteredIssues
+                          : projectData.issues;
+                      navigator.clipboard?.writeText(
+                        JSON.stringify(payload, null, 2)
+                      );
+                    }}
+                  >
+                    Copy JSON
+                  </button>
+                </div>
                 <details style={styles.detailsBox}>
                   <summary style={styles.summaryToggle}>View payload</summary>
                   <pre style={styles.jsonPreview}>
-{JSON.stringify(projectData.issues, null, 2)}
+{JSON.stringify(
+  jsonView === "filtered" ? filteredIssues : projectData.issues,
+  null,
+  2
+)}
                   </pre>
                 </details>
+                <small style={styles.meta}>
+                  Showing{" "}
+                  {jsonView === "filtered"
+                    ? `${filteredIssues.length} filtered`
+                    : `${projectData.issues.length} total`}{" "}
+                  issues.
+                </small>
               </div>
             </div>
 
@@ -763,6 +903,43 @@ export function IssueManagerDashboard() {
                     }
                     title="Labels"
                   />
+                  <div style={styles.filterRow}>
+                    <label style={styles.filterField}>
+                      <span style={styles.label}>Health status</span>
+                      <select
+                        style={styles.select}
+                        value={editForm.healthStatus}
+                        onChange={(event) =>
+                          setEditForm((prev) => ({
+                            ...prev,
+                            healthStatus: event.target
+                              .value as CreateFormState["healthStatus"],
+                          }))
+                        }
+                      >
+                        <option value="">Not set</option>
+                        <option value="on_track">On track</option>
+                        <option value="needs_attention">Needs attention</option>
+                        <option value="at_risk">At risk</option>
+                      </select>
+                    </label>
+                    <label style={styles.filterField}>
+                      <span style={styles.label}>Estimate (hours)</span>
+                      <input
+                        style={styles.input}
+                        type="number"
+                        min="0"
+                        step="0.25"
+                        value={editForm.estimateHours}
+                        onChange={(event) =>
+                          setEditForm((prev) => ({
+                            ...prev,
+                            estimateHours: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
                 </>
               ) : (
                 <label style={styles.field}>
@@ -1084,7 +1261,7 @@ const styles: Record<string, CSSProperties> = {
   },
   jsonPreview: {
     marginTop: "0.5rem",
-    maxHeight: "240px",
+    maxHeight: "320px",
     overflow: "auto",
     background: "rgba(15, 23, 42, 0.8)",
     borderRadius: "0.65rem",

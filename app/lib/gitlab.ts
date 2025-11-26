@@ -37,6 +37,8 @@ export interface GitLabIssue {
   author?: IssueAssignee | null;
   assignees: IssueAssignee[];
   labels: IssueLabel[];
+  healthStatus?: "on_track" | "needs_attention" | "at_risk" | null;
+  timeEstimate?: number | null;
 }
 
 export interface ProjectIssuesResult {
@@ -75,6 +77,8 @@ type IssuePageResponse = {
         labels: {
           nodes: IssueLabel[];
         };
+        healthStatus?: "on_track" | "needs_attention" | "at_risk" | null;
+        timeEstimate?: number | null;
       }>;
       pageInfo: {
         hasNextPage: boolean;
@@ -105,6 +109,8 @@ const ISSUE_LIST_QUERY = `
           description
           state
           webUrl
+          healthStatus
+          timeEstimate
           createdAt
           updatedAt
           author {
@@ -217,6 +223,8 @@ export async function fetchProjectIssues(
         author: node.author,
         assignees: node.assignees?.nodes ?? [],
         labels: node.labels?.nodes ?? [],
+        healthStatus: node.healthStatus,
+        timeEstimate: node.timeEstimate,
       })) ?? [];
 
     issues.push(...pageIssues);
@@ -269,6 +277,8 @@ export interface CreateIssueInput {
   title: string;
   description?: string;
   labels?: string[];
+  healthStatus?: "on_track" | "needs_attention" | "at_risk";
+  timeEstimateSeconds?: number;
 }
 
 export async function createIssue(
@@ -290,6 +300,8 @@ export async function createIssue(
       title: input.title,
       description: input.description,
       labels: input.labels?.join(","),
+      health_status: input.healthStatus,
+      time_estimate: input.timeEstimateSeconds,
     }),
   });
 
@@ -311,6 +323,8 @@ export async function createIssue(
     author?: { id: number; name: string; username: string };
     assignees?: Array<{ id: number; name: string; username: string }>;
     labels?: string[];
+    health_status?: string | null;
+    time_stats?: { time_estimate?: number | null };
   };
 
   return {
@@ -339,6 +353,9 @@ export async function createIssue(
       payload.labels?.map((name) => ({
         title: name,
       })) ?? [],
+    healthStatus:
+      payload.health_status as "on_track" | "needs_attention" | "at_risk" | undefined,
+    timeEstimate: payload.time_stats?.time_estimate ?? null,
   };
 }
 
@@ -353,6 +370,8 @@ export interface UpdateIssueInput {
   description?: string;
   labels?: string[];
   stateEvent?: "close" | "reopen";
+  healthStatus?: "on_track" | "needs_attention" | "at_risk";
+  timeEstimateSeconds?: number | null;
 }
 
 export async function updateIssueLabels(
@@ -411,6 +430,9 @@ export async function updateIssue(
   if (input.description !== undefined) body.description = input.description;
   if (input.labels) body.labels = input.labels.join(",");
   if (input.stateEvent) body.state_event = input.stateEvent;
+  if (input.healthStatus) body.health_status = input.healthStatus;
+  if (input.timeEstimateSeconds !== undefined)
+    body.time_estimate = input.timeEstimateSeconds;
 
   if (Object.keys(body).length === 0) {
     throw new Error("No fields provided to update.");
@@ -443,6 +465,8 @@ export async function updateIssue(
     author?: { id: number; name: string; username: string };
     assignees?: Array<{ id: number; name: string; username: string }>;
     labels?: string[];
+    health_status?: string | null;
+    time_stats?: { time_estimate?: number | null };
   };
 
   return {
@@ -471,5 +495,8 @@ export async function updateIssue(
       payload.labels?.map((name) => ({
         title: name,
       })) ?? [],
+    healthStatus:
+      payload.health_status as "on_track" | "needs_attention" | "at_risk" | undefined,
+    timeEstimate: payload.time_stats?.time_estimate ?? null,
   };
 }

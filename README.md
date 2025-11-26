@@ -27,6 +27,22 @@ NEXT_PUBLIC_GITLAB_TOKEN=your-pat-with-api-scope
 ```
 Values are only read on the client for convenience; do not commit real tokens.
 
+## CLI: create an issue from the terminal
+You can create an issue without running the UI:
+```bash
+# set envs (or place them in .env)
+GITLAB_PROJECT_PATH=group/subgroup/project
+GITLAB_TOKEN=your-pat-with-api-scope
+
+npm run create-issue -- --title "Bug" --description "Details" --labels "bug,ui" --health on_track --estimate 2
+```
+Flags:
+- `--title` (required), `--description` (optional)
+- `--labels "label1,label2"`
+- `--health on_track|needs_attention|at_risk`
+- `--estimate <hours>` (numeric, converted to seconds)
+- `--project`, `--token`, `--api-url` can override envs
+
 ## Production build
 ```bash
 npm run build
